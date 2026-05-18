@@ -21,9 +21,12 @@ command -v apt-get >/dev/null 2>&1 \
 command -v claude >/dev/null 2>&1 \
   || die "Claude Code CLI not found. Install: https://docs.claude.com/claude-code"
 
-if ! command -v jq >/dev/null 2>&1; then
-  step "1/4" "Installing jq..."
-  sudo apt-get install -y jq >/dev/null
+need_pkgs=()
+command -v jq     >/dev/null 2>&1 || need_pkgs+=(jq)
+command -v script >/dev/null 2>&1 || need_pkgs+=(bsdextrautils)
+if [ "${#need_pkgs[@]}" -gt 0 ]; then
+  step "1/4" "Installing: ${need_pkgs[*]}"
+  sudo apt-get install -y "${need_pkgs[@]}" >/dev/null
 fi
 
 if command -v gum >/dev/null 2>&1; then
@@ -35,10 +38,13 @@ else
     aarch64|arm64) gum_arch="arm64" ;;
     *)             die "unsupported architecture: $(uname -m)" ;;
   esac
-  gum_url=$(curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
-    | jq -r --arg a "$gum_arch" '.assets[] | .browser_download_url
-        | select(test("_Linux_" + $a + "\\.tar\\.gz$"))')
-  [ -n "$gum_url" ] || die "could not resolve gum release asset for Linux_${gum_arch}"
+  # Resolve the latest tag via github.com's HTTP redirect (api.github.com
+  # is unauthenticated-rate-limited to 60/hr per IP).
+  gum_tag=$(curl -fsI -o /dev/null -w '%{redirect_url}' \
+    https://github.com/charmbracelet/gum/releases/latest | sed 's|.*/||')
+  [ -n "$gum_tag" ] || die "could not resolve latest gum version"
+  gum_ver="${gum_tag#v}"
+  gum_url="https://github.com/charmbracelet/gum/releases/download/${gum_tag}/gum_${gum_ver}_Linux_${gum_arch}.tar.gz"
   curl -fsSL "$gum_url" -o "$tmp_dir/gum.tar.gz"
   tar -xzf "$tmp_dir/gum.tar.gz" -C "$tmp_dir"
   GUM="$(find "$tmp_dir" -type f -name gum -executable | head -n1)"
@@ -86,8 +92,32 @@ step "4/4" "Prompt for claude:"
 echo
 sed 's/^/    /' "$prompt_file"
 echo
-echo "Launching claude..."
+echo "─── streaming progress ──────────────────────────────"
 echo
 
+# Wrap claude in `script -qfc` so it sees a pty for stdout. Without this,
+# piping claude's stream-json output into jq triggers full block buffering
+# and nothing reaches the user until claude finishes.
+cat > "$tmp_dir/run-claude.sh" <<EOF
+#!/bin/sh
+exec claude -p --output-format stream-json --permission-mode bypassPermissions "\$(cat "$prompt_file")"
+EOF
+chmod +x "$tmp_dir/run-claude.sh"
+
 exec </dev/tty
-exec claude -p --permission-mode bypassPermissions "$(cat "$prompt_file")"
+script -qfc "$tmp_dir/run-claude.sh" /dev/null \
+| jq -r --unbuffered '
+    if .type == "system" and .subtype == "init" then "● session started"
+    elif .type == "assistant" then
+      [(.message.content // [])[] |
+        if .type == "text" and (.text | length) > 0 then .text
+        elif .type == "tool_use" then "● " + .name
+        else empty end
+      ] | join("\n")
+    elif .type == "user" then
+      [(.message.content // [])[]? |
+        if .type == "tool_result" then "  ↳ done" else empty end
+      ] | join("\n")
+    elif .type == "result" then "\n● finished in \((.duration_ms / 1000 | floor))s"
+    else empty
+    end' 2>/dev/null

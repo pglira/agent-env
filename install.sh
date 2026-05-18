@@ -9,8 +9,8 @@ RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REF}"
 MANIFEST_URL="${RAW_BASE}/manifest.json"
 INSTALL_MD_URL="${RAW_BASE}/INSTALL.md"
 
-tmp_prompt="$(mktemp -t agent-env.XXXXXX)"
-trap 'rm -f "$tmp_prompt"' EXIT
+tmp_dir="$(mktemp -d -t agent-env.XXXXXX)"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 step() { printf '\033[1m[%s]\033[0m %s\n' "$1" "$2"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -21,57 +21,73 @@ command -v apt-get >/dev/null 2>&1 \
 command -v claude >/dev/null 2>&1 \
   || die "Claude Code CLI not found. Install: https://docs.claude.com/claude-code"
 
-need_install=()
-command -v jq       >/dev/null 2>&1 || need_install+=(jq)
-command -v whiptail >/dev/null 2>&1 || need_install+=(whiptail)
-if [ "${#need_install[@]}" -gt 0 ]; then
-  step "1/4" "Installing missing packages: ${need_install[*]}"
-  sudo apt-get install -y "${need_install[@]}" >/dev/null
+if ! command -v jq >/dev/null 2>&1; then
+  step "1/4" "Installing jq..."
+  sudo apt-get install -y jq >/dev/null
+fi
+
+if command -v gum >/dev/null 2>&1; then
+  GUM="gum"
+else
+  step "1/4" "Fetching gum (TUI) for this session..."
+  case "$(uname -m)" in
+    x86_64)        gum_arch="x86_64" ;;
+    aarch64|arm64) gum_arch="arm64" ;;
+    *)             die "unsupported architecture: $(uname -m)" ;;
+  esac
+  gum_url=$(curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
+    | jq -r --arg a "$gum_arch" '.assets[] | .browser_download_url
+        | select(test("_Linux_" + $a + "\\.tar\\.gz$"))')
+  [ -n "$gum_url" ] || die "could not resolve gum release asset for Linux_${gum_arch}"
+  curl -fsSL "$gum_url" -o "$tmp_dir/gum.tar.gz"
+  tar -xzf "$tmp_dir/gum.tar.gz" -C "$tmp_dir"
+  GUM="$(find "$tmp_dir" -type f -name gum -executable | head -n1)"
+  [ -x "$GUM" ] || die "could not extract gum binary"
 fi
 
 step "2/4" "Fetching manifest..."
 manifest=$(curl -fsSL "$MANIFEST_URL")
 n_items=$(echo "$manifest" | jq -r '.items | length')
-if [ "$n_items" -eq 0 ]; then
-  echo "No items available to install yet (manifest is empty)."
-  exit 0
-fi
+[ "$n_items" -gt 0 ] \
+  || { echo "No items available to install yet (manifest is empty)."; exit 0; }
 
-step "3/4" "Building menu..."
-args=()
+step "3/4" "Showing menu..."
+options=()
 while IFS=$'\t' read -r type name desc; do
-  args+=("${type}:${name}" "$desc" "OFF")
+  options+=("${type}:${name}  ${desc}")
 done < <(echo "$manifest" | jq -r '.items[] | [.type, .name, .description] | @tsv')
 
 selected=$(
-  whiptail \
-    --title "agent-env" \
-    --separate-output \
-    --checklist "Select items to install (space toggles, enter confirms):" \
-    20 78 12 \
-    "${args[@]}" \
-    3>&1 1>&2 2>&3 </dev/tty
+  "$GUM" choose --no-limit \
+    --header "Select items to install (space toggles, enter confirms):" \
+    "${options[@]}" \
+    </dev/tty
 ) || { echo "Cancelled."; exit 0; }
 
-if [ -z "$selected" ]; then
-  echo "Nothing selected."
-  exit 0
-fi
+[ -n "$selected" ] || { echo "Nothing selected."; exit 0; }
 
-step "4/4" "Handing off to claude..."
+prompt_file="$tmp_dir/prompt.md"
 {
   echo "Install the following items into ~/.claude/ on this machine, following the procedure at:"
   echo "  ${INSTALL_MD_URL}"
   echo
   echo "Items to install (in order):"
-  while IFS= read -r tag; do
+  while IFS= read -r line; do
+    tag="${line%% *}"
     type="${tag%%:*}"
     name="${tag#*:}"
     echo "  - ${type}: ${name}"
   done <<< "$selected"
   echo
   echo "Begin by fetching INSTALL.md and following its rules. When done, print a short summary."
-} > "$tmp_prompt"
+} > "$prompt_file"
 
-exec </dev/tty
-claude "$(cat "$tmp_prompt")"
+step "4/4" "Prompt for claude:"
+echo
+sed 's/^/    /' "$prompt_file"
+echo
+echo "Launching claude..."
+echo
+
+exec </dev/tty >/dev/tty 2>&1
+exec claude "$(cat "$prompt_file")"

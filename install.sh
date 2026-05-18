@@ -86,29 +86,8 @@ step "4/4" "Prompt for claude:"
 echo
 sed 's/^/    /' "$prompt_file"
 echo
-echo "─── streaming progress ──────────────────────────────"
+echo "Launching claude..."
 echo
 
 exec </dev/tty
-claude -p \
-  --output-format stream-json \
-  --permission-mode bypassPermissions \
-  "$(cat "$prompt_file")" \
-| jq -r --unbuffered '
-  if .type == "system" and .subtype == "init" then
-    "● session started"
-  elif .type == "assistant" then
-    [(.message.content // [])[] |
-      if .type == "text" then .text
-      elif .type == "tool_use" then "● " + .name
-      else empty end
-    ] | join("\n")
-  elif .type == "user" then
-    [(.message.content // [])[]? |
-      if .type == "tool_result" then "  ↳ done" else empty end
-    ] | join("\n")
-  elif .type == "result" then
-    "\n● finished in \((.duration_ms / 1000 | floor))s"
-  else empty
-  end
-'
+exec claude -p --permission-mode bypassPermissions "$(cat "$prompt_file")"

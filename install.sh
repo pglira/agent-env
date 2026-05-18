@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-env installer: presents a menu, then hands the selection to `claude`.
+# agent-env installer: presents a menu and prints the claude command to run.
 set -euo pipefail
 
 REPO_OWNER="pglira"
@@ -21,12 +21,9 @@ command -v apt-get >/dev/null 2>&1 \
 command -v claude >/dev/null 2>&1 \
   || die "Claude Code CLI not found. Install: https://docs.claude.com/claude-code"
 
-need_pkgs=()
-command -v jq     >/dev/null 2>&1 || need_pkgs+=(jq)
-command -v script >/dev/null 2>&1 || need_pkgs+=(bsdextrautils)
-if [ "${#need_pkgs[@]}" -gt 0 ]; then
-  step "1/4" "Installing: ${need_pkgs[*]}"
-  sudo apt-get install -y "${need_pkgs[@]}" >/dev/null
+if ! command -v jq >/dev/null 2>&1; then
+  step "1/4" "Installing jq..."
+  sudo apt-get install -y jq >/dev/null
 fi
 
 if command -v gum >/dev/null 2>&1; then
@@ -72,7 +69,11 @@ selected=$(
 
 [ -n "$selected" ] || { echo "Nothing selected."; exit 0; }
 
-prompt_file="$tmp_dir/prompt.md"
+# Save the prompt to a persistent location the user can reference after this
+# script exits (the temp dir is wiped on EXIT).
+out_dir="$HOME/.cache/agent-env"
+mkdir -p "$out_dir"
+prompt_file="$out_dir/prompt.md"
 {
   echo "Install the following items into ~/.claude/ on this machine, following the procedure at:"
   echo "  ${INSTALL_MD_URL}"
@@ -88,47 +89,7 @@ prompt_file="$tmp_dir/prompt.md"
   echo "Begin by fetching INSTALL.md and following its rules. When done, print a short summary."
 } > "$prompt_file"
 
-step "4/4" "Prompt for claude:"
+step "4/4" "Prompt saved. Run this command to install:"
 echo
-sed 's/^/    /' "$prompt_file"
+printf '  \033[1mclaude --permission-mode bypassPermissions "$(cat %s)"\033[0m\n' "$prompt_file"
 echo
-echo "─── streaming progress ──────────────────────────────"
-echo
-
-# Wrap claude in `script -qfc` so it sees a pty for stdout. Without this,
-# piping claude's stream-json output into jq triggers full block buffering
-# and nothing reaches the user until claude finishes.
-cat > "$tmp_dir/run-claude.sh" <<EOF
-#!/bin/sh
-exec claude -p --output-format stream-json --permission-mode bypassPermissions "\$(cat "$prompt_file")"
-EOF
-chmod +x "$tmp_dir/run-claude.sh"
-
-exec </dev/tty
-
-# Stream events one line at a time and parse each with a fresh jq.
-# This sidesteps any input/output buffering that could hide progress.
-# The whole pipeline is wrapped in `|| true` so a single bad line
-# can't kill the script under set -e + pipefail.
-filter='
-  if .type == "system" and .subtype == "init" then "● session started"
-  elif .type == "assistant" then
-    [(.message.content // [])[] |
-      if .type == "text" and (.text | length) > 0 then .text
-      elif .type == "tool_use" then "● " + .name
-      else empty end
-    ] | join("\n")
-  elif .type == "user" then
-    [(.message.content // [])[]? |
-      if .type == "tool_result" then "  ↳ done" else empty end
-    ] | join("\n")
-  elif .type == "result" then "\n● finished in \((.duration_ms / 1000 | floor))s"
-  else empty
-  end'
-
-{
-  script -qfc "$tmp_dir/run-claude.sh" /dev/null | while IFS= read -r line; do
-    out=$(printf '%s\n' "$line" | jq -r "$filter" 2>/dev/null || true)
-    [ -n "$out" ] && printf '%s\n' "$out"
-  done
-} || true

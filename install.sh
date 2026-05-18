@@ -105,19 +105,30 @@ EOF
 chmod +x "$tmp_dir/run-claude.sh"
 
 exec </dev/tty
-script -qfc "$tmp_dir/run-claude.sh" /dev/null \
-| jq -r --unbuffered '
-    if .type == "system" and .subtype == "init" then "● session started"
-    elif .type == "assistant" then
-      [(.message.content // [])[] |
-        if .type == "text" and (.text | length) > 0 then .text
-        elif .type == "tool_use" then "● " + .name
-        else empty end
-      ] | join("\n")
-    elif .type == "user" then
-      [(.message.content // [])[]? |
-        if .type == "tool_result" then "  ↳ done" else empty end
-      ] | join("\n")
-    elif .type == "result" then "\n● finished in \((.duration_ms / 1000 | floor))s"
-    else empty
-    end' 2>/dev/null
+
+# Stream events one line at a time and parse each with a fresh jq.
+# This sidesteps any input/output buffering that could hide progress.
+# The whole pipeline is wrapped in `|| true` so a single bad line
+# can't kill the script under set -e + pipefail.
+filter='
+  if .type == "system" and .subtype == "init" then "● session started"
+  elif .type == "assistant" then
+    [(.message.content // [])[] |
+      if .type == "text" and (.text | length) > 0 then .text
+      elif .type == "tool_use" then "● " + .name
+      else empty end
+    ] | join("\n")
+  elif .type == "user" then
+    [(.message.content // [])[]? |
+      if .type == "tool_result" then "  ↳ done" else empty end
+    ] | join("\n")
+  elif .type == "result" then "\n● finished in \((.duration_ms / 1000 | floor))s"
+  else empty
+  end'
+
+{
+  script -qfc "$tmp_dir/run-claude.sh" /dev/null | while IFS= read -r line; do
+    out=$(printf '%s\n' "$line" | jq -r "$filter" 2>/dev/null || true)
+    [ -n "$out" ] && printf '%s\n' "$out"
+  done
+} || true

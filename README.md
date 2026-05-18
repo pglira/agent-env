@@ -4,6 +4,8 @@ Bootstrap a Claude Code environment (skills, agents, CLAUDE.md, settings.json) o
 
 ## Install
 
+> **Do not run from your home folder.** `cd` into a repo root first (e.g. `~/repos/agent-env`). The `claude` command printed in step 4 launches Claude Code in the current directory — running it from `$HOME` makes Claude treat your entire home as the project root.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pglira/agent-env/main/install.sh | bash
 ```
@@ -12,8 +14,8 @@ The installer:
 
 1. Checks for `apt-get` and `claude`; auto-installs `jq` and fetches `gum` if missing.
 2. Loads `manifest.json` from this repo and shows a `gum` checklist of available items.
-3. Builds a prompt referencing [`INSTALL.md`](./INSTALL.md) and hands it to `claude -p`.
-4. The Claude Code agent fetches each selected item and writes it into `~/.claude/`.
+3. Builds a prompt referencing [`INSTALL.md`](./INSTALL.md) and writes it to `~/.cache/agent-env/prompt.md`.
+4. Prints a `claude` command for you to copy/paste — Claude Code then fetches each selected item and writes it into `~/.claude/`.
 
 ## Requirements
 

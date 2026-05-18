@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "type": "skill",
+      "name": "grill-me",
+      "description": "Interview the user relentlessly about a plan until shared understanding."
+    },
+    {
+      "type": "skill",
+      "name": "grill-with-docs",
+      "description": "Grill a plan against the project's domain model and existing docs."
+    }
+  ]
+}

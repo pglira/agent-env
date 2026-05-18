@@ -75,7 +75,7 @@ out_dir="$HOME/.cache/agent-env"
 mkdir -p "$out_dir"
 prompt_file="$out_dir/prompt.md"
 {
-  echo "Install the following items into ~/.claude/ on this machine, following the procedure at:"
+  echo "Install the following items into the CURRENT WORKING DIRECTORY (project-scoped, NOT into \$HOME or ~/.claude/). Follow the procedure at:"
   echo "  ${INSTALL_MD_URL}"
   echo
   echo "Items to install (in order):"
@@ -86,7 +86,7 @@ prompt_file="$out_dir/prompt.md"
     echo "  - ${type}: ${name}"
   done <<< "$selected"
   echo
-  echo "Begin by fetching INSTALL.md and following its rules. When done, print a short summary."
+  echo "Begin by fetching INSTALL.md and following its rules. All targets are under ./.claude/ or ./CLAUDE.md — never under \$HOME. When done, print a short summary."
 } > "$prompt_file"
 
 step "4/4" "Prompt saved. Run this command to install:"

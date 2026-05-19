@@ -9,6 +9,11 @@
       "type": "skill",
       "name": "grill-with-docs",
       "description": "Grill a plan against the project's domain model and existing docs."
+    },
+    {
+      "type": "claude_md",
+      "name": "writing-style",
+      "description": "Clear, functional English style for all prose."
     }
   ]
 }

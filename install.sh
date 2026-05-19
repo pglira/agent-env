@@ -89,7 +89,26 @@ prompt_file="$out_dir/prompt.md"
   echo "Begin by fetching INSTALL.md and following its rules. All targets are under ./.claude/ or ./CLAUDE.md — never under \$HOME. When done, print a short summary."
 } > "$prompt_file"
 
+cmd="claude --permission-mode bypassPermissions \"\$(cat ${prompt_file})\""
+
 step "4/4" "Prompt saved. Run this command to install:"
 echo
-printf '  \033[1mclaude --permission-mode bypassPermissions "$(cat %s)"\033[0m\n' "$prompt_file"
+printf '  \033[1m%s\033[0m\n' "$cmd"
+echo
+
+# Best-effort copy to clipboard.
+clip_status=""
+if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then
+  printf '%s' "$cmd" | wl-copy && clip_status="copied to clipboard (wl-copy)"
+elif [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then
+  printf '%s' "$cmd" | xclip -selection clipboard && clip_status="copied to clipboard (xclip)"
+elif [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then
+  printf '%s' "$cmd" | xsel --clipboard --input && clip_status="copied to clipboard (xsel)"
+fi
+
+if [ -n "$clip_status" ]; then
+  echo "  ($clip_status)"
+else
+  echo "  (no clipboard tool found; install wl-clipboard or xclip to auto-copy)"
+fi
 echo

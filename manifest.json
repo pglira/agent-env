@@ -11,6 +11,16 @@
       "description": "Grill a plan against the project's domain model and existing docs."
     },
     {
+      "type": "skill",
+      "name": "caveman",
+      "description": "Ultra-compressed communication mode that cuts token usage while keeping technical accuracy."
+    },
+    {
+      "type": "skill",
+      "name": "handoff",
+      "description": "Compact the current conversation into a handoff document for another agent to pick up."
+    },
+    {
       "type": "claude_md",
       "name": "writing-style",
       "description": "Clear, functional English style for all prose."

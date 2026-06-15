@@ -26,6 +26,11 @@
       "description": "Rename a paper, file it in the right literature subdirectory, and write a companion BibTeX file."
     },
     {
+      "type": "skill",
+      "name": "read-pdf-comments",
+      "description": "Extract reviewer comments/annotations from a PDF as clean Markdown (PyMuPDF-based, agent-friendly)."
+    },
+    {
       "type": "claude_md",
       "name": "writing-style",
       "description": "Clear, functional English style for all prose."

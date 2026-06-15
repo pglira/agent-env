@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Extract comments (annotations) from a PDF.
+
+Designed to be agent-friendly: by default it prints clean, readable Markdown
+to stdout so an LLM/agent can act on each comment. Use --json for structured
+output suitable for programmatic consumption.
+
+For markup annotations (highlight / underline / strikeout / squiggly) the text
+*underneath* the markup is extracted and shown as a quote, paired with the
+reviewer's note. Sticky notes (Text) and FreeText boxes carry no underlying
+text; for them, for highlights that cover only a short fragment, and for quotes
+that occur several times on the same page, the nearby page text is shown as a
+"near:" line so the comment can be located in the document.
+
+Examples:
+    pdf-comments paper.pdf                 # Markdown to stdout
+    pdf-comments paper.pdf --json          # JSON array
+    pdf-comments paper.pdf -o notes.md     # write Markdown to a file
+
+Requires PyMuPDF (import fitz), which is installed on this machine.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    sys.exit("error: PyMuPDF is required (pip install pymupdf)")
+
+# Annotation subtypes that carry a markup region whose underlying page text
+# is meaningful to extract.
+MARKUP_TEXT_TYPES = {"Highlight", "Underline", "StrikeOut", "Squiggly"}
+
+# Subtypes that are never user comments — skip them.
+SKIP_TYPES = {"Link", "Popup", "Widget"}
+
+
+def parse_pdf_date(raw: str | None) -> str | None:
+    """Turn a PDF date string (D:YYYYMMDDHHmmSS...) into 'YYYY-MM-DD HH:MM'."""
+    if not raw:
+        return None
+    m = re.search(r"(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?", raw)
+    if not m:
+        return None
+    y, mo, d, h, mi = m.groups()
+    out = f"{y}-{mo}-{d}"
+    if h and mi:
+        out += f" {h}:{mi}"
+    return out
+
+
+def markup_text(page: "fitz.Page", annot: "fitz.Annot") -> str:
+    """Extract the page text covered by a markup annotation's quad points."""
+    verts = annot.vertices
+    if not verts:
+        return ""
+    chunks = []
+    # Quad points come in groups of 4 corner points, one group per text line.
+    for i in range(0, len(verts) - 3, 4):
+        rect = fitz.Quad(verts[i:i + 4]).rect
+        chunks.append(page.get_textbox(rect).strip())
+    text = " ".join(c for c in chunks if c)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def nearby_text(page: "fitz.Page", annot: "fitz.Annot", max_chars: int = 240) -> str:
+    """Return the page text closest to an annotation.
+
+    Sticky notes and free-text boxes have no underlying text, so the only way
+    to locate them is via the page text near their position. This finds the
+    text block nearest to the annotation's anchor and returns a short snippet.
+    """
+    arect = annot.rect
+    ax = arect.x0                       # left edge of the annotation
+    ay = (arect.y0 + arect.y1) / 2.0    # vertical center of the annotation
+    best, best_dist = "", None
+    for block in page.get_text("blocks"):
+        x0, y0, x1, y1, text = block[0], block[1], block[2], block[3], block[4]
+        text = (text or "").strip()
+        if not text:
+            continue
+        # Distance from the anchor to this block's rectangle (0 if inside).
+        dx = 0.0 if x0 <= ax <= x1 else min(abs(ax - x0), abs(ax - x1))
+        dy = 0.0 if y0 <= ay <= y1 else min(abs(ay - y0), abs(ay - y1))
+        dist = (dx * dx + dy * dy) ** 0.5
+        if best_dist is None or dist < best_dist:
+            best, best_dist = text, dist
+    snippet = re.sub(r"\s+", " ", best).strip()
+    if len(snippet) > max_chars:
+        snippet = snippet[:max_chars].rstrip() + "…"
+    return snippet
+
+
+def extract(path: str) -> list[dict]:
+    doc = fitz.open(path)
+    comments = []
+    for pno, page in enumerate(doc, start=1):
+        annots = list(page.annots() or [])
+        if not annots:
+            continue
+        # Sort top-to-bottom, then left-to-right, by annotation position.
+        annots.sort(key=lambda a: (round(a.rect.y0, 1), round(a.rect.x0, 1)))
+        # Normalized page text, used to tell whether a quote is unique.
+        page_text = re.sub(r"\s+", " ", page.get_text())
+        for a in annots:
+            atype = a.type[1]
+            if atype in SKIP_TYPES:
+                continue
+            info = a.info
+            content = (info.get("content") or "").strip()
+            quoted = markup_text(page, a) if atype in MARKUP_TEXT_TYPES else ""
+            # Drop empty annotations that carry no signal at all.
+            if not content and not quoted:
+                continue
+            # Add nearby page text whenever the quote alone cannot locate the
+            # comment: missing (sticky note / free-text box), a short fragment,
+            # or ambiguous because it occurs several times on the page.
+            ambiguous = bool(quoted) and page_text.count(quoted) > 1
+            context = nearby_text(page, a) if len(quoted) < 5 or ambiguous else ""
+            comments.append({
+                "page": pno,
+                "type": atype,
+                "author": (info.get("title") or "").strip() or None,
+                "date": parse_pdf_date(info.get("modDate") or info.get("creationDate")),
+                "quoted": quoted or None,
+                "context": context or None,
+                "comment": content or None,
+            })
+    doc.close()
+    return comments
+
+
+def to_markdown(comments: list[dict], path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    if not comments:
+        return f"# Comments in {name}\n\nNo comments found.\n"
+    lines = [f"# Comments in {name}", "", f"{len(comments)} comment(s).", ""]
+    last_page = None
+    n = 0
+    for c in comments:
+        if c["page"] != last_page:
+            lines.append(f"## Page {c['page']}")
+            lines.append("")
+            last_page = c["page"]
+        n += 1
+        meta = c["type"]
+        if c["author"]:
+            meta += f" · {c['author']}"
+        if c["date"]:
+            meta += f" · {c['date']}"
+        lines.append(f"### [{n}] {meta}")
+        if c["quoted"]:
+            lines.append(f"> {c['quoted']}")
+            lines.append("")
+        if c.get("context"):
+            lines.append(f"> _near:_ {c['context']}")
+            lines.append("")
+        if c["comment"]:
+            lines.append(c["comment"])
+        else:
+            lines.append("_(markup, no note)_")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Extract comments/annotations from a PDF.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    ap.add_argument("pdf", help="path to the PDF file")
+    ap.add_argument("--json", action="store_true", help="emit JSON instead of Markdown")
+    ap.add_argument("-o", "--output", help="write to this file instead of stdout")
+    args = ap.parse_args()
+
+    try:
+        comments = extract(args.pdf)
+    except Exception as e:  # noqa: BLE001 — surface a clean message to the agent
+        sys.exit(f"error: could not read '{args.pdf}': {e}")
+
+    out = (json.dumps(comments, indent=2, ensure_ascii=False) + "\n"
+           if args.json else to_markdown(comments, args.pdf))
+
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(out)
+        print(f"wrote {len(comments)} comment(s) to {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.write(out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

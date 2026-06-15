@@ -29,6 +29,11 @@
       "type": "claude_md",
       "name": "writing-style",
       "description": "Clear, functional English style for all prose."
+    },
+    {
+      "type": "claude_md",
+      "name": "comments",
+      "description": "Write code comments in an absolute manner: describe the code as it is, not how it changed."
     }
   ]
 }

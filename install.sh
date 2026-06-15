@@ -69,14 +69,37 @@ selected=$(
 
 [ -n "$selected" ] || { echo "Nothing selected."; exit 0; }
 
+# Ask where the selected items should be installed: into the current project
+# (./.claude/, ./CLAUDE.md) or system-wide into the user's home (~/.claude/).
+scope_choice=$(
+  "$GUM" choose \
+    --header "Install scope — where should the selected items go?" \
+    "project  current directory (./.claude/, ./CLAUDE.md)" \
+    "home     system-wide (~/.claude/)" \
+    </dev/tty
+) || { echo "Cancelled."; exit 0; }
+scope="${scope_choice%% *}"   # leading keyword only: "project" or "home"
+[ -n "$scope" ] || { echo "No scope selected."; exit 0; }
+
+# Scope-specific wording for the install prompt.
+if [ "$scope" = "home" ]; then
+  scope_intro="Install the following items SYSTEM-WIDE into the user's home Claude config under ~/.claude/, NOT into the current working directory. Follow the procedure at:"
+  scope_outro="Begin by fetching INSTALL.md and following its rules for the \"home\" scope. All targets are under ~/.claude/ — never inside the current working directory. When done, print a short summary."
+else
+  scope_intro="Install the following items into the CURRENT WORKING DIRECTORY (project-scoped, NOT into \$HOME or ~/.claude/). Follow the procedure at:"
+  scope_outro="Begin by fetching INSTALL.md and following its rules for the \"project\" scope. All targets are under ./.claude/ or ./CLAUDE.md — never under \$HOME. When done, print a short summary."
+fi
+
 # Save the prompt to a persistent location the user can reference after this
 # script exits (the temp dir is wiped on EXIT).
 out_dir="$HOME/.cache/agent-env"
 mkdir -p "$out_dir"
 prompt_file="$out_dir/prompt.md"
 {
-  echo "Install the following items into the CURRENT WORKING DIRECTORY (project-scoped, NOT into \$HOME or ~/.claude/). Follow the procedure at:"
+  echo "$scope_intro"
   echo "  ${INSTALL_MD_URL}"
+  echo
+  echo "Install scope: ${scope}"
   echo
   echo "Items to install (in order):"
   while IFS= read -r line; do
@@ -86,7 +109,7 @@ prompt_file="$out_dir/prompt.md"
     echo "  - ${type}: ${name}"
   done <<< "$selected"
   echo
-  echo "Begin by fetching INSTALL.md and following its rules. All targets are under ./.claude/ or ./CLAUDE.md — never under \$HOME. When done, print a short summary."
+  echo "$scope_outro"
 } > "$prompt_file"
 
 cmd="claude --permission-mode bypassPermissions \"\$(cat ${prompt_file})\""

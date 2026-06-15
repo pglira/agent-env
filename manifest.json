@@ -21,6 +21,11 @@
       "description": "Compact the current conversation into a handoff document for another agent to pick up."
     },
     {
+      "type": "skill",
+      "name": "archive-paper",
+      "description": "Rename a paper, file it in the right literature subdirectory, and write a companion BibTeX file."
+    },
+    {
       "type": "claude_md",
       "name": "writing-style",
       "description": "Clear, functional English style for all prose."

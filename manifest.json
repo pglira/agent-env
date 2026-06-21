@@ -39,6 +39,11 @@
       "type": "claude_md",
       "name": "comments",
       "description": "Write code comments in an absolute manner: describe the code as it is, not how it changed."
+    },
+    {
+      "type": "claude_md",
+      "name": "communication",
+      "description": "Be concise: simple, plain language, straight to the point."
     }
   ]
 }

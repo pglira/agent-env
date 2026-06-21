@@ -109,6 +109,8 @@ prompt_file="$out_dir/prompt.md"
     echo "  - ${type}: ${name}"
   done <<< "$selected"
   echo
+  echo "If an item is already present in the target scope, update it in place rather than duplicating it; skip it if it is already identical."
+  echo
   echo "$scope_outro"
 } > "$prompt_file"
 

@@ -17,6 +17,11 @@
     },
     {
       "type": "skill",
+      "name": "wait-what",
+      "description": "Re-pitch a message that didn't land, in Simplified Technical English."
+    },
+    {
+      "type": "skill",
       "name": "handoff",
       "description": "Compact the current conversation into a handoff document for another agent to pick up."
     },

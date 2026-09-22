@@ -49,6 +49,11 @@
       "type": "claude_md",
       "name": "communication",
       "description": "Be concise: simple, plain language, straight to the point."
+    },
+    {
+      "type": "claude_md",
+      "name": "technical-english",
+      "description": "Always respond in ASD-STE100 Simplified Technical English (one meaning per word, short active sentences)."
     }
   ]
 }
